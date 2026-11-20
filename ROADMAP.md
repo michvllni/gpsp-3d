@@ -100,6 +100,16 @@ What's been reported, what's done, and what's next. Reports come from
 | **Remaking an icon with the other banner type** failed (C8E083FC): the old icon is now replaced | Surge And Finn (Discord) | ✅ |
 | Custom banner sounds (`Game.banner.wav`) in Icon Maker | Surge And Finn (Discord) | 📋 next |
 
+**Icon Maker: systems as plugins** (icons for other 3DS apps' games; the first is rmxp3ds, RPG Maker XP games)
+
+| Change | Asked by | Status |
+|---|---|---|
+| **System files**: the systems come from `sdmc:/3ds/gpsp3d/iconmaker/systems/*.cfg` (up to 16) as well as the built-in GBA and SNES; a file with a built-in system's name replaces it; a bad file is skipped and listed under the games; the header shows the installed systems' tags; box art per system (`boxart=`) | michvllni (GitHub) | 🧪 |
+| **Games found by each system's `extensions=`**; a `.zip` goes to the system with the extension of its first file, else to the first with `.zip`; texts say "games" and the intro lists each system's app | michvllni (GitHub) | 🧪 |
+| **Folder games** (`folder_game=`): a folder holding `Game.ini` is one game, named from `title_from=` | michvllni (GitHub) | 📋 |
+| **Pictures for folder games**: `<folder>.png` next to it, or `icon.png` / `banner.png` in it | michvllni (GitHub) | 📋 |
+| **Default icons** `icon=generic` (a tile with the name) and `icon=<png>` | michvllni (GitHub) | 📋 |
+
 **gpSP 3D v0.1.8: performance**
 
 | Plan | Status |
