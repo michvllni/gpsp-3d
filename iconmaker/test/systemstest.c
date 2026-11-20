@@ -438,6 +438,155 @@ static void test_random(void)
    printf("random files: %d of 200000 accepted\n", ok);
 }
 
+/* a zip in dir whose first file is named first (its local header; the rest
+ * isn't read), or len bytes of junk if first is NULL */
+static void put_zip(const char *name, const char *first, int len)
+{
+   unsigned char hdr[30] = { 'P', 'K', 3, 4 };
+   char p[300];
+   FILE *f;
+   snprintf(p, sizeof(p), "%s/%s", dir, name);
+   f = fopen(p, "wb");
+   if (first)
+   {
+      int n = strlen(first);
+      hdr[26] = n & 255;
+      hdr[27] = n >> 8;
+      fwrite(hdr, 1, 30, f);
+      fwrite(first, 1, n, f);
+   }
+   else
+      while (len-- > 0)
+         fputc('z', f);
+   fclose(f);
+}
+
+static int of_file(const sys_desc *list, int n, const char *name)
+{
+   char p[300];
+   snprintf(p, sizeof(p), "%s/%s", dir, name);
+   return sys_of_file(list, n, p);
+}
+
+static void test_detect(void)
+{
+   static sys_desc list[SYS_MAX];
+   char longname[400];
+   int n = sys_builtin(list), i;
+
+   /* the built-in ones, as before */
+   CHECK(sys_of_ext(list, n, ".gba") == SYS_GBA);
+   CHECK(sys_of_ext(list, n, ".GBA") == SYS_GBA);
+   CHECK(sys_of_ext(list, n, ".sfc") == SYS_SNES);
+   CHECK(sys_of_ext(list, n, ".SMC") == SYS_SNES);
+   CHECK(sys_of_ext(list, n, ".fig") == SYS_SNES);
+   CHECK(sys_of_ext(list, n, ".swc") == SYS_SNES);
+   CHECK(sys_of_ext(list, n, ".zip") == SYS_GBA);
+   CHECK(sys_of_ext(list, n, ".nes") == -1);
+   CHECK(sys_of_ext(list, n, "gba") == -1);
+   CHECK(sys_of_ext(list, n, ".") == -1);
+   CHECK(sys_of_ext(list, n, "") == -1);
+   CHECK(sys_of_ext(list, n, NULL) == -1);
+
+   /* a zip by its first file */
+   CHECK(sys_of_zip(list, n, "Super Metroid (USA).sfc") == SYS_SNES);
+   CHECK(sys_of_zip(list, n, "roms/Super Metroid.SMC") == SYS_SNES);
+   CHECK(sys_of_zip(list, n, "Golf.gba") == SYS_GBA);
+   CHECK(sys_of_zip(list, n, "readme.txt") == SYS_GBA);
+   CHECK(sys_of_zip(list, n, "inner.zip") == SYS_GBA);
+   CHECK(sys_of_zip(list, n, "game.sfc/") == SYS_GBA);
+   CHECK(sys_of_zip(list, n, "dir.sfc/game") == SYS_GBA);
+   CHECK(sys_of_zip(list, n, "noext") == SYS_GBA);
+   CHECK(sys_of_zip(list, n, "") == SYS_GBA);
+   CHECK(sys_of_zip(list, n, NULL) == SYS_GBA);
+
+   /* files on disk */
+   strcpy(dir, "/tmp/systemstest.XXXXXX");
+   CHECK(mkdtemp(dir) != NULL);
+   put("Golf.gba", "x");
+   put("Mario.sfc", "x");
+   put("notes.txt", "x");
+   put("noext", "x");
+   put_zip("snes.zip", "Super Metroid (USA).sfc", 0);
+   put_zip("SNES2.ZIP", "Zelda.swc", 0);
+   put_zip("gba.zip", "Golf.gba", 0);
+   put_zip("other.zip", "readme.txt", 0);
+   put_zip("junk.zip", NULL, 100);
+   put_zip("empty.zip", NULL, 0);
+   put_zip("short.zip", NULL, 20);
+   memset(longname, 'a', sizeof(longname));
+   strcpy(longname + 300, ".sfc");             /* cut to 255: no extension left */
+   put_zip("long.zip", longname, 0);
+   {
+      /* a header that says its name is longer than the file */
+      unsigned char hdr[34] = { 'P', 'K', 3, 4 };
+      char p[300];
+      FILE *f;
+      hdr[26] = 200;
+      memcpy(hdr + 30, "a.sf", 4);
+      snprintf(p, sizeof(p), "%s/cut.zip", dir);
+      f = fopen(p, "wb");
+      fwrite(hdr, 1, sizeof(hdr), f);
+      fclose(f);
+   }
+   CHECK(of_file(list, n, "Golf.gba") == SYS_GBA);
+   CHECK(of_file(list, n, "Mario.sfc") == SYS_SNES);
+   CHECK(of_file(list, n, "notes.txt") == -1);
+   CHECK(of_file(list, n, "noext") == -1);
+   CHECK(of_file(list, n, "snes.zip") == SYS_SNES);
+   CHECK(of_file(list, n, "SNES2.ZIP") == SYS_SNES);
+   CHECK(of_file(list, n, "gba.zip") == SYS_GBA);
+   CHECK(of_file(list, n, "other.zip") == SYS_GBA);
+   CHECK(of_file(list, n, "junk.zip") == SYS_GBA);
+   CHECK(of_file(list, n, "empty.zip") == SYS_GBA);
+   CHECK(of_file(list, n, "short.zip") == SYS_GBA);
+   CHECK(of_file(list, n, "long.zip") == SYS_GBA);
+   CHECK(of_file(list, n, "cut.zip") == SYS_GBA);
+   CHECK(of_file(list, n, "missing.zip") == SYS_GBA);  /* as before: GBA if it can't be told */
+   CHECK(sys_of_file(list, n, "/tmp/a.gba/game") == -1);
+
+   /* a system from a file: its extensions, and zips of its games if it has .zip */
+   CHECK(parse("name=Test\nconsole=TST\ntitle_id=0x0004000000ABC000\nextensions=.tst,.ZIP,.gba\n") == 0);
+   list[n++] = s;
+   CHECK(parse("name=NoZip\nconsole=NZ\ntitle_id=0x0004000000ABD000\nextensions=.nz\n") == 0);
+   list[n++] = s;
+   put("game.tst", "x");
+   put("game.NZ", "x");
+   put_zip("tst.zip", "game.tst", 0);
+   put_zip("nz.zip", "game.nz", 0);
+   CHECK(of_file(list, n, "game.tst") == 2);
+   CHECK(of_file(list, n, "game.NZ") == 3);
+   CHECK(of_file(list, n, "Golf.gba") == SYS_GBA);       /* the first system with .gba */
+   CHECK(of_file(list, n, "tst.zip") == 2);
+   CHECK(of_file(list, n, "nz.zip") == SYS_GBA);         /* NoZip can't open zips */
+   CHECK(of_file(list, n, "snes.zip") == SYS_SNES);
+
+   /* GBA replaced by a file without .zip: zips go to the next one that has it */
+   CHECK(parse("name=gpSP 3D\nconsole=GBA\ntitle_id=0x000400000BAC8100\nextensions=.gba\n") == 0);
+   list[SYS_GBA] = s;
+   CHECK(of_file(list, n, "other.zip") == SYS_SNES);
+   CHECK(of_file(list, n, "gba.zip") == 2);             /* Test has .gba and .zip */
+   CHECK(of_file(list, n, "tst.zip") == 2);
+
+   /* no system has .zip: a zip isn't a game, and isn't read */
+   CHECK(of_file(list + 3, 1, "snes.zip") == -1);
+   CHECK(sys_of_zip(list + 3, 1, "game.nz") == -1);
+   CHECK(of_file(list + 3, 1, "game.NZ") == 0);
+   CHECK(of_file(list, 0, "Golf.gba") == -1);
+
+   /* every system full: still the first with the extension */
+   n = sys_builtin(list);
+   for (i = n; i < SYS_MAX; i++)
+   {
+      CHECK(parse("name=Test\nconsole=TST\ntitle_id=0x0004000000ABC000\nextensions=.a,.b,.c,.d,.e,.f,.g,.tst\n") == 0);
+      list[i] = s;
+   }
+   CHECK(of_file(list, SYS_MAX, "game.tst") == SYS_BUILTIN);
+
+   clean();
+   rmdir(dir);
+}
+
 int main(void)
 {
    test_random();
@@ -447,6 +596,7 @@ int main(void)
    test_numbers();
    test_duplicate_keys();
    test_folder();
+   test_detect();
    printf("%d checks, %d failed\n", checks, fails);
    return fails ? 1 : 0;
 }

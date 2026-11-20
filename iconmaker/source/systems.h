@@ -82,4 +82,15 @@ int sys_parse(const char *text, size_t len, sys_desc *s, char *why, int whylen);
  * files go to notes (at most SYS_NOTES; *nnotes counts them all). */
 int sys_load(const char *dir, sys_desc *list, int n, sys_note *notes, int *nnotes);
 
+/* Which of the n systems in list a game is for, or -1 if it isn't a game.
+ * The first system whose extensions have the file's wins. A .zip is for
+ * the first system that has both .zip and the extension of the zip's first
+ * file, else for the first system that has .zip (GBA, built in).
+ * sys_of_ext: by an extension (".gba", the dot included).
+ * sys_of_zip: a zip whose first file is named first (NULL: unknown).
+ * sys_of_file: a file on the SD card (reads a zip's first header). */
+int sys_of_ext(const sys_desc *list, int n, const char *ext);
+int sys_of_zip(const sys_desc *list, int n, const char *first);
+int sys_of_file(const sys_desc *list, int n, const char *path);
+
 #endif

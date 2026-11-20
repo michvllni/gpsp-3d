@@ -150,10 +150,15 @@ The header shows the tags of the systems installed as a CIA (`GBA + SNES`).
 Box art for another system comes from its `boxart` folder; its game list is
 kept in `sdmc:/3ds/gpsp3d/boxart_<number>.txt`.
 
-In this version the files are read and checked, and their apps show in the
-header and in **My icons**. Games are still found by the GBA and SNES
-extensions only; finding other systems' games (`extensions`,
-`folder_game`) and the `generic` and PNG icons come next (see ROADMAP.md).
+A game file is for the first system whose `extensions` have its
+extension (the built-in ones come first, then the files in name order). A
+`.zip` is for the first system that has `.zip` and the extension of the
+first file in the zip, else for the first system that has `.zip` (GBA). A
+system without `.zip` in its `extensions` gets no zips.
+
+In this version games are found by their `extensions`; folder games
+(`folder_game`, `title_from`) and the `generic` and PNG icons come next
+(see ROADMAP.md). Until then, a system's games get the GBA cartridge icon.
 
 An app that wants icons has to: be installed as a CIA with its `title_id`;
 at start, read the game's path from its `launch` file, then delete or ignore

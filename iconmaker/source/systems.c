@@ -421,3 +421,70 @@ int sys_load(const char *dir, sys_desc *list, int n, sys_note *notes, int *nnote
    }
    return n;
 }
+
+/* ------------------------------------------------------------------ */
+/* which system a game is for                                          */
+/* ------------------------------------------------------------------ */
+
+static int has_ext(const sys_desc *s, const char *ext)
+{
+   int i;
+   for (i = 0; i < s->next; i++)
+      if (!strcasecmp(s->ext[i], ext))
+         return 1;
+   return 0;
+}
+
+int sys_of_ext(const sys_desc *list, int n, const char *ext)
+{
+   int i;
+   if (!ext || ext[0] != '.')
+      return -1;
+   for (i = 0; i < n; i++)
+      if (has_ext(&list[i], ext))
+         return i;
+   return -1;
+}
+
+int sys_of_zip(const sys_desc *list, int n, const char *first)
+{
+   const char *dot = first ? strrchr(first, '.') : NULL;
+   int i;
+   if (dot && !strchr(dot, '/') && strcasecmp(dot, ".zip"))
+      for (i = 0; i < n; i++)
+         if (has_ext(&list[i], dot) && has_ext(&list[i], ".zip"))
+            return i;
+   return sys_of_ext(list, n, ".zip");
+}
+
+int sys_of_file(const sys_desc *list, int n, const char *path)
+{
+   const char *dot = strrchr(path, '.');
+   unsigned char hdr[30];
+   char first[256];
+   int got = 0;
+   FILE *f;
+   if (!dot || strchr(dot, '/'))
+      return -1;
+   if (strcasecmp(dot, ".zip"))
+      return sys_of_ext(list, n, dot);
+   if (sys_of_ext(list, n, ".zip") < 0)
+      return -1;                         /* no system opens zips: don't read it */
+   /* the first entry's name, from its local header */
+   if ((f = fopen(path, "rb")))
+   {
+      if (fread(hdr, 1, 30, f) == 30 && hdr[0] == 'P' && hdr[1] == 'K' && hdr[2] == 3 && hdr[3] == 4)
+      {
+         int len = hdr[26] | hdr[27] << 8;
+         if (len > 255)
+            len = 255;
+         if (fread(first, 1, len, f) == (size_t)len)
+         {
+            first[len] = 0;
+            got = 1;
+         }
+      }
+      fclose(f);
+   }
+   return sys_of_zip(list, n, got ? first : NULL);
+}

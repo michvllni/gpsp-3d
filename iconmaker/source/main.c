@@ -1,11 +1,12 @@
 /*
- * Icon Maker: puts GBA and SNES games on the HOME Menu, right from the 3DS.
+ * Icon Maker: puts games on the HOME Menu, right from the 3DS.
  *
  * Pick a game; the app builds a small forwarder CIA for it (from the
  * template built into it, see fwdcia.h) and installs it. Started from the
- * HOME Menu, the forwarder opens the game's emulator straight into it:
- * gpSP 3D for GBA games, Snes9x 3D for SNES games (it writes the game's
- * path to the file the emulator reads at startup, then starts it).
+ * HOME Menu, the forwarder opens the game's app straight into it:
+ * gpSP 3D for GBA games, Snes9x 3D for SNES games, or another system's app
+ * from a system file (systems.h); for all but gpSP 3D it writes the game's
+ * path to the file the app reads at startup, then starts it.
  *
  * Name: the game's file name. Icon: a PNG or JPEG next to the game with
  * the same name (Golf.gba -> Golf.png or Golf.jpg, any size), else a
@@ -366,50 +367,6 @@ static bool icon_installed(u64 tid)
 /* the file list                                                       */
 /* ------------------------------------------------------------------ */
 
-static int system_of_ext(const char *dot)
-{
-   if (!dot)
-      return -1;
-   if (!strcasecmp(dot, ".gba"))
-      return SYS_GBA;
-   if (!strcasecmp(dot, ".sfc") || !strcasecmp(dot, ".smc") ||
-       !strcasecmp(dot, ".fig") || !strcasecmp(dot, ".swc"))
-      return SYS_SNES;
-   return -1;
-}
-
-/* Which emulator a game file is for, or -1 if it isn't a game. A .zip is
- * for the system of the first file in it (GBA if that can't be told). */
-static int system_of(const char *path)
-{
-   const char *dot = strrchr(path, '.');
-   int sys = system_of_ext(dot);
-   if (sys >= 0 || !dot || strcasecmp(dot, ".zip"))
-      return sys;
-   {
-      u8 hdr[30];
-      char inner[256];
-      FILE *f = fopen(path, "rb");
-      int n;
-      sys = SYS_GBA;
-      if (!f)
-         return sys;
-      if (fread(hdr, 1, 30, f) == 30 && hdr[0] == 'P' && hdr[1] == 'K' && hdr[2] == 3 && hdr[3] == 4)
-      {
-         n = hdr[26] | hdr[27] << 8;
-         if (n > 255) n = 255;
-         if (fread(inner, 1, n, f) == (size_t)n)
-         {
-            inner[n] = 0;
-            if (system_of_ext(strrchr(inner, '.')) == SYS_SNES)
-               sys = SYS_SNES;
-         }
-      }
-      fclose(f);
-   }
-   return sys;
-}
-
 /* The pictures in the folder (and in boxart_dir), by name: looking for a
  * file that isn't there costs about 60 ms on the SD card, so each game's
  * are found once, here */
@@ -547,7 +504,7 @@ static void read_dir(void)
          continue;
       }
       snprintf(path, sizeof(path), "%s%s", cwd, e->d_name);
-      if (!dir && (sys = system_of(path)) < 0)
+      if (!dir && (sys = sys_of_file(systems, nsystems, path)) < 0)
          continue;
       snprintf(entries[nentries].name, sizeof(entries[0].name), "%s", e->d_name);
       entries[nentries].dir = dir;
@@ -1321,7 +1278,7 @@ static void draw_bottom(int tab, int sel, int top)
       ui_text(&ui_font_small, 10, LIST_Y - 18, cwd + 5, C_FAINT, UI_W - 30 - iw);
       ui_text_right(&ui_font_small, UI_W - 10, LIST_Y - 18, info, C_DIM);
       if (!nentries)
-         ui_text_center(&ui_font_body, UI_W / 2, 130, "No folders or GBA / SNES games here", C_DIM);
+         ui_text_center(&ui_font_body, UI_W / 2, 130, "No folders or games here", C_DIM);
       for (i = 0; i < ROWS && top + i < games_rows(); i++)
       {
          const entry *e = &entries[top + i];
@@ -1475,19 +1432,67 @@ static void draw_top_folder(const char *name, bool up)
       ui_text_center(&ui_font_small, UI_W / 2, 148, "A: open the folder", C_DIM);
 }
 
+/* s into out with a '\n' wherever a line would get wider than max_w;
+ * returns the number of lines */
+static int wrap_text(const ui_font *f, const char *s, int max_w, char *out, int n)
+{
+   int lines = 1, start = 0, last_space = -1, i;
+   snprintf(out, n, "%s", s);
+   for (i = 0; out[i]; i++)
+   {
+      char c;
+      if (out[i] != ' ')
+         continue;
+      c = out[i];
+      out[i] = 0;
+      if (ui_text_w(f, out + start) > max_w && last_space > start)
+      {
+         out[last_space] = '\n';
+         start = last_space + 1;
+         lines++;
+      }
+      out[i] = c;
+      last_space = i;
+   }
+   if (ui_text_w(f, out + start) > max_w && last_space > start)
+   {
+      out[last_space] = '\n';
+      lines++;
+   }
+   return lines;
+}
+
+/* the intro's last lines: which app each system's games open in */
+static const char *intro_apps(void)
+{
+   static char text[1200];
+   char all[1200];
+   size_t len = 0;
+   int i;
+   for (i = 0; i < nsystems && len < sizeof(all); i++)
+      len += snprintf(all + len, sizeof(all) - len, "%s%s games %sin %s",
+                      i ? (i == nsystems - 1 ? " and " : ", ") : "",
+                      systems[i].console, i ? "" : "open ", systems[i].name);
+   if (len < sizeof(all))
+      snprintf(all + len, sizeof(all) - len, ": install %s as CIAs.", nsystems == 1 ? "it" : "them");
+   if (wrap_text(&ui_font_small, all, UI_W - 70, text, sizeof(text)) > 3)
+      wrap_text(&ui_font_small, "Games open in their systems' apps: install them as CIAs.",
+                UI_W - 70, text, sizeof(text));
+   return text;
+}
+
 static void draw_top_intro(void)
 {
    top_bg();
    ui_text_center(&ui_font_title, UI_W / 2, 40, "Icon Maker", C_TEXT);
-   ui_text_center(&ui_font_small, UI_W / 2, 68, "Puts GBA and SNES games on the HOME Menu", C_DIM);
+   ui_text_center(&ui_font_small, UI_W / 2, 68, "Puts your games on the HOME Menu", C_DIM);
    text_lines(&ui_font_small, 40, 100, 16,
               "Icon: Golf.png or .jpg next to Golf.gba,\n"
               "else a cartridge with the game's name.\n"
               "Banner: Golf.banner.png or .jpg (256x128),\n"
               "else the icon, bigger, with the name.\n"
-              "Other shapes: X pads or crops them.\n\n"
-              "GBA games open in gpSP 3D, SNES games\n"
-              "in Snes9x 3D: install them as CIAs.", C_TEXT2, UI_W - 60);
+              "Other shapes: X pads or crops them.", C_TEXT2, UI_W - 60);
+   text_lines(&ui_font_small, 40, 188, 16, intro_apps(), C_TEXT2, UI_W - 60);
 }
 
 /* the system files that were skipped, and why */
@@ -1645,7 +1650,7 @@ static void make_folder(void)
    int i, done = 0, failed = 0;
    if (!ngames)
    {
-      dialog("No games here", "This folder has no GBA or SNES games.", "OK", NULL, C_ROW_SEL);
+      dialog("No games here", "This folder has no games.", "OK", NULL, C_ROW_SEL);
       return;
    }
    snprintf(body, sizeof(body), "All %d game%s in this folder.\nGames that are on the HOME Menu\nalready get made again.",
@@ -1948,7 +1953,7 @@ static void boxart_folder(void)
    {
       dialog(nobox ? "No box art for them" : ngames ? "They all have pictures" : "No games here",
              nobox ? "The games here without a picture\nhave no box art source (boxart=none)."
-             : ngames ? "Every game here has its own picture." : "This folder has no GBA or SNES games.",
+             : ngames ? "Every game here has its own picture." : "This folder has no games.",
              "OK", NULL, C_ROW_SEL);
       return;
    }
