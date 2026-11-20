@@ -92,7 +92,10 @@ static int nboxart_src;
 /* pic[0], pic[1]: the game's icon and banner picture, as an index into
  * pic_types, or -1 if there's none (found when the folder is read);
  * pic_boxart: the icon picture is in boxart_dir */
-typedef struct { char name[256]; bool dir, has_icon, pic_boxart; int sys; s8 pic[2]; } entry;
+/* a list row: a folder, or a game (a file, or a folder game: a folder with
+ * its system's folder_game file in it, made like a file; its name from
+ * title_from is folder_titles[title], -1 if it has none) */
+typedef struct { char name[256]; bool dir, folder, has_icon, pic_boxart; int sys; s8 pic[2]; s16 title; } entry;
 static const char *const pic_types[] = { "png", "jpg", "jpeg" };
 /* Pictures too big to use (an icon from the name instead, and a note): a
  * side over PIC_MAX_SIDE; a progressive JPEG whose coefficients would take
@@ -115,6 +118,10 @@ static sys_note sys_notes[SYS_NOTES];
 static int nsys_notes;
 
 static entry entries[MAX_ENTRIES];
+#define FOLDER_TITLES 256         /* folder games' names in a folder (16 KB) */
+static char folder_titles[FOLDER_TITLES][SYS_TITLE_MAX + 1];
+static int nfolder_titles;
+static bool any_folder_games;     /* a system has folder_game: look in folders */
 static int nentries, ngames;
 static icon_entry icons[MAX_ICONS];
 static int nicons;
@@ -442,7 +449,7 @@ static void find_pictures(void)
       const char *name = entries[i].name, *dot = strrchr(name, '.');
       entries[i].pic[0] = entries[i].pic[1] = -1;
       entries[i].pic_boxart = false;
-      if (entries[i].dir || !dot)
+      if (entries[i].dir || entries[i].folder || !dot)
          continue;
       for (k = 0; k < 2; k++)
          for (t = 2; t >= 0; t--)          /* png wins, as when they were opened in turn */
@@ -466,12 +473,18 @@ static void find_pictures(void)
    clear_pictures(&pics);
 }
 
+/* the name a row shows: a folder game's from title_from, else the file's */
+static const char *entry_title(const entry *e)
+{
+   return e->folder && e->title >= 0 ? folder_titles[e->title] : e->name;
+}
+
 static int cmp_entry(const void *a, const void *b)
 {
    const entry *x = a, *y = b;
    if (x->dir != y->dir)
       return x->dir ? -1 : 1;
-   return strcasecmp(x->name, y->name);
+   return strcasecmp(entry_title(x), entry_title(y));
 }
 
 static void read_dir(void)
@@ -481,11 +494,13 @@ static void read_dir(void)
 #endif
    DIR *d = opendir(cwd);
    struct dirent *e;
-   nentries = ngames = 0;
+   nentries = ngames = nfolder_titles = 0;
    if (strcmp(cwd, "sdmc:/"))
    {
       strcpy(entries[0].name, "..");
       entries[0].dir = true;
+      entries[0].folder = false;
+      entries[0].title = -1;
       nentries = 1;
    }
    if (!d)
@@ -506,6 +521,17 @@ static void read_dir(void)
       snprintf(path, sizeof(path), "%s%s", cwd, e->d_name);
       if (!dir && (sys = sys_of_file(systems, nsystems, path)) < 0)
          continue;
+      entries[nentries].folder = false;
+      entries[nentries].title = -1;
+      if (dir && any_folder_games && (sys = sys_of_folder(systems, nsystems, path)) >= 0)
+      {
+         /* a folder game: made like a game file, its path the folder's */
+         dir = false;
+         entries[nentries].folder = true;
+         if (nfolder_titles < FOLDER_TITLES &&
+             !sys_folder_title(&systems[sys], path, folder_titles[nfolder_titles], SYS_TITLE_MAX + 1))
+            entries[nentries].title = (s16)nfolder_titles++;
+      }
       snprintf(entries[nentries].name, sizeof(entries[0].name), "%s", e->d_name);
       entries[nentries].dir = dir;
       entries[nentries].sys = sys;
@@ -869,12 +895,30 @@ typedef struct
 static void make_art(const char *path, const entry *e, game_art *a)
 {
    const char *name = strrchr(path, '/') + 1, *dot = strrchr(name, '.');
-   int n = (int)(dot - name), sys = e->sys, iw, ih, bw, bh;
+   int sys = e->sys, iw, ih, bw, bh;
    u8 *icon_png, *banner_png = NULL;
    char boxart[800];
    bool big;
 
-   snprintf(a->title, sizeof(a->title), "%.*s", n > 63 ? 63 : n, name);
+   if (e->folder)
+   {
+      /* a folder game: title_from, or the folder's name, cut at a whole UTF-8 letter */
+      const char *t = entry_title(e);
+      size_t n = strlen(t);
+      if (n > sizeof(a->title) - 1)
+      {
+         n = sizeof(a->title) - 1;
+         while (n && ((u8)t[n] & 0xC0) == 0x80)
+            n--;
+      }
+      memcpy(a->title, t, n);
+      a->title[n] = 0;
+   }
+   else
+   {
+      int n = (int)(dot - name);
+      snprintf(a->title, sizeof(a->title), "%.*s", n > 63 ? 63 : n, name);
+   }
    a->sys = sys;
    /* the picture comes decoded small (at least 128x128): the 3D tile and the
     * generated banner, and the icon, are made from it */
@@ -1312,7 +1356,7 @@ static void draw_bottom(int tab, int sel, int top)
             ui_text_vc(&ui_font_small, ROW_X + ROW_W - pw - 1, y + 4, h - 8, "on HOME", C_GOOD, 0);
             right = ROW_W - pw - 50;
          }
-         ui_text_vc(&ui_font_body, ROW_X + 34, y, h, strcmp(e->name, "..") ? e->name : ".. (up a folder)",
+         ui_text_vc(&ui_font_body, ROW_X + 34, y, h, strcmp(e->name, "..") ? entry_title(e) : ".. (up a folder)",
                     s ? C_TEXT : C_TEXT2, right);
       }
       draw_scrollbar(games_rows(), top);
@@ -1362,7 +1406,8 @@ static void top_bg(void)
    ui_vgradient(0, 0, UI_W, UI_H, C_BG2, C_BG);
 }
 
-static void draw_top_game(const game_art *a, bool installed)
+/* the top screen for a game; folder: a folder game (its icon in the list opens it) */
+static void draw_top_game(const game_art *a, bool installed, bool folder)
 {
    top_bg();
    ui_text(&ui_font_small, 32, 6, "HOME Menu preview", C_DIM, 0);
@@ -1387,6 +1432,8 @@ static void draw_top_game(const game_art *a, bool installed)
 
    ui_rrect(28, 164, 56, 56, 10, C_PANEL);
    blit_rgba(a->icon48, 48, 48, 32, 168, 1);
+   /* a folder game has a fifth line, so the lines are closer */
+   int ly = folder ? 182 : 186, dy = folder ? 14 : 15;
    ui_text(&ui_font_bold, 96, 164, a->title, C_TEXT, UI_W - 110);
    {
       /* a picture too big to use says so, and its size */
@@ -1395,11 +1442,11 @@ static void draw_top_game(const game_art *a, bool installed)
                a->icon_big[0], a->icon_big[1]);
       snprintf(big[1], sizeof(big[1]), a->banner_big[0] ? "Banner: picture too big (%dx%d)" : "Banner: picture too big",
                a->banner_big[0], a->banner_big[1]);
-      ui_text(&ui_font_small, 96, 186, a->icon_too_big ? big[0]
+      ui_text(&ui_font_small, 96, ly, a->icon_too_big ? big[0]
               : !a->has_icon_png ? "Icon: made from the name"
               : fit_mode == FIT_CROP ? "Icon: its picture, cropped (X)" : "Icon: its picture, padded (X)",
               a->icon_too_big ? C_WARN : C_DIM, 0);
-      ui_text(&ui_font_small, 96, 201, a->banner_too_big ? big[1]
+      ui_text(&ui_font_small, 96, ly + dy, a->banner_too_big ? big[1]
               : a->has_banner_png && a->flat ? (fit_mode == FIT_CROP ? "Banner: its .banner picture, cropped (X)"
                                                                      : "Banner: its .banner picture, padded (X)")
               : banner_style == STYLE_3D ? "Banner: 3D, the icon turns (SELECT)"
@@ -1412,8 +1459,10 @@ static void draw_top_game(const game_art *a, bool installed)
          snprintf(opens, sizeof(opens), "Opens in %s", systems[a->sys].name);
       else
          snprintf(opens, sizeof(opens), "%s isn't installed as a CIA", systems[a->sys].name);
-      ui_text(&ui_font_small, 96, 216, opens, sys_installed[a->sys] ? C_DIM : C_WARN, 0);
+      ui_text(&ui_font_small, 96, ly + 2 * dy, opens, sys_installed[a->sys] ? C_DIM : C_WARN, 0);
    }
+   if (folder)
+      ui_text(&ui_font_small, 96, ly + 3 * dy, "Tap its icon to open it as a folder", C_DIM, 0);
    if (installed)
    {
       ui_rrect(220, 4, 70, 16, 8, UI_RGB(0x1E, 0x3B, 0x2E));
@@ -1801,7 +1850,7 @@ static void ba_list_key(const sys_desc *sy, char *out, int n)
 /* the game's system has box art (not boxart=none in its file) */
 static bool has_boxart(const entry *e)
 {
-   return systems[e->sys].boxart[0] != 0;
+   return !e->folder && systems[e->sys].boxart[0] != 0;
 }
 
 /* box art for the game e (in cwd): saved to boxart_dir or next to it;
@@ -1898,6 +1947,11 @@ static void boxart_one(const entry *e)
    {
       dialog("It has a picture", "Its own picture is used for the icon.\n"
              "Delete or rename it to get box art.", "OK", NULL, C_ROW_SEL);
+      return;
+   }
+   if (e->folder)
+   {
+      dialog("No box art for it", "Box art is found for game files,\nnot for folder games.", "OK", NULL, C_ROW_SEL);
       return;
    }
    if (!has_boxart(e))
@@ -2359,7 +2413,7 @@ static bool draw_top_for(int tab, int sel, bool am)
             return false;
          }
       }
-      draw_top_game(a, entries[sel].has_icon);
+      draw_top_game(a, entries[sel].has_icon, entries[sel].folder);
       tm_mark("draw the top screen");
       tm_report(entries[sel].name);
    }
@@ -2381,6 +2435,7 @@ int main(void)
    /* the systems first: "My icons" is found by their names */
    nsystems = sys_builtin(systems);
    nsystems = sys_load(SYS_DIR, systems, nsystems, sys_notes, &nsys_notes);
+   any_folder_games = sys_has_folder_games(systems, nsystems) != 0;
    if (am)
       read_icons();
    load_settings();
@@ -2398,7 +2453,7 @@ int main(void)
       u32 k;
       touchPosition t;
       int count, old_sel = sel, old_tab = tab;
-      bool act = false;
+      bool act = false, open_folder = false;
 
       hidScanInput();
       k = hidKeysDown() | (hidKeysDownRepeat() & (KEY_DUP | KEY_DDOWN | KEY_DLEFT | KEY_DRIGHT)) | preview_keys;
@@ -2421,7 +2476,10 @@ int main(void)
             int idx = top + (t.py - LIST_Y) / ROW_H;
             if (idx < count)
             {
-               if (idx == sel)
+               /* a folder game's icon, on its row once selected, opens it as a folder */
+               if (idx == sel && tab == TAB_GAMES && idx < nentries && entries[idx].folder && t.px < ROW_X + 32)
+                  open_folder = true;
+               else if (idx == sel)
                   act = true;
                sel = idx;
             }
@@ -2478,6 +2536,12 @@ int main(void)
             make_folder();
             read_icons();
             read_dir();
+            redraw = true;
+         }
+         else if (open_folder)
+         {
+            enter(entries[sel].name);
+            sel = top = 0;
             redraw = true;
          }
          else if ((k & KEY_A || act) && sel < nentries)

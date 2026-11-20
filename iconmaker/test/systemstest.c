@@ -587,6 +587,209 @@ static void test_detect(void)
    rmdir(dir);
 }
 
+static int ini(const char *text, const char *sec, const char *key, char *out, int outn)
+{
+   return sys_ini_value(text, strlen(text), sec, key, out, outn);
+}
+
+static void test_ini(void)
+{
+   char v[64];
+   /* RPG Maker XP's Game.ini */
+   static const char game_ini[] =
+      "[Game]\r\nLibrary=RGSS104E.dll\r\nScripts=Data\\Scripts.rxdata\r\nTitle=Aedemphia\r\nRTP1=Standard\r\nRTP2=\r\nRTP3=\r\n";
+   CHECK(ini(game_ini, "Game", "Title", v, sizeof(v)) == 0 && !strcmp(v, "Aedemphia"));
+   CHECK(ini(game_ini, "game", "TITLE", v, sizeof(v)) == 0 && !strcmp(v, "Aedemphia"));
+   CHECK(ini(game_ini, "Game", "RTP2", v, sizeof(v)) == -1 && !v[0]);       /* empty */
+   CHECK(ini(game_ini, "Game", "Name", v, sizeof(v)) == -1);
+   CHECK(ini(game_ini, "Other", "Title", v, sizeof(v)) == -1);
+   CHECK(ini(game_ini, "Game", "Library", v, sizeof(v)) == 0 && !strcmp(v, "RGSS104E.dll"));
+   /* spaces, a BOM, quotes, comments, LF only, no newline at the end */
+   CHECK(ini("\xEF\xBB\xBF; c\n# c\n[ Game ]\n  Title  =  \"  My Game \"  ", "Game", "Title", v, sizeof(v)) == 0 && !strcmp(v, "My Game"));
+   CHECK(ini("[Game]\nTitle=\"\"\n", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=\"\n", "Game", "Title", v, sizeof(v)) == 0 && !strcmp(v, "\""));
+   /* the right section only; the first value wins */
+   CHECK(ini("Title=Top\n[A]\nTitle=A\n[Game]\nTitle=G\nTitle=G2\n[B]\nTitle=B\n", "Game", "Title", v, sizeof(v)) == 0 && !strcmp(v, "G"));
+   CHECK(ini("[Game]\nX=1\n[Other]\nTitle=O\n", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game\nTitle=T\n", "Game", "Title", v, sizeof(v)) == -1);      /* no ']': not a section */
+   CHECK(ini("[Game]\nTitle\nTitles=x\nTitle=T\n", "Game", "Title", v, sizeof(v)) == 0 && !strcmp(v, "T"));
+   CHECK(ini("[Game]\nTitle=a=b\n", "Game", "Title", v, sizeof(v)) == 0 && !strcmp(v, "a=b"));
+   CHECK(ini("[Game]\nTi tle=x\n", "Game", "Ti tle", v, sizeof(v)) == 0);
+   CHECK(ini("", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=T\n", "Game", "Title", v, 0) == -1);
+   /* UTF-8 kept, cut at a whole letter */
+   CHECK(ini("[Game]\nTitle=Pok\xC3\xA9mon \xE3\x81\x82\n", "Game", "Title", v, sizeof(v)) == 0 && !strcmp(v, "Pok\xC3\xA9mon \xE3\x81\x82"));
+   CHECK(ini("[Game]\nTitle=ab\xC3\xA9z\n", "Game", "Title", v, 4) == 0 && !strcmp(v, "ab"));
+   CHECK(ini("[Game]\nTitle=ab\xC3\xA9z\n", "Game", "Title", v, 5) == 0 && !strcmp(v, "ab\xC3\xA9"));
+   CHECK(ini("[Game]\nTitle=\xF0\x9F\x98\x80!\n", "Game", "Title", v, 4) == 0 && !strcmp(v, ""));
+   CHECK(ini("[Game]\nTitle=abc\n", "Game", "Title", v, 1) == 0 && !strcmp(v, ""));
+   /* not UTF-8 text: Shift-JIS, Windows-1252, control characters, overlong,
+    * surrogates, past U+10FFFF, cut letters */
+   CHECK(ini("[Game]\nTitle=\x83\x51\x81\x5B\x83\x80\n", "Game", "Title", v, sizeof(v)) == -1 && !v[0]);
+   CHECK(ini("[Game]\nTitle=Pok\xE9mon\n", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=a\tb\n", "Game", "Title", v, sizeof(v)) == -1);  /* a tab inside it too */
+   CHECK(ini("[Game]\nTitle=a\x01" "b\n", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=a\x7F" "b\n", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=\xC0\xAF\n", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=\xE0\x80\xAF\n", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=\xED\xA0\x80\n", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=\xF4\x90\x80\x80\n", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=a\xC3", "Game", "Title", v, sizeof(v)) == -1);
+   CHECK(ini("[Game]\nTitle=\xE3\x81\n", "Game", "Title", v, sizeof(v)) == -1);
+   /* a NUL in the text: up to it */
+   CHECK(sys_ini_value("[Game]\nTitle=a\0b\n", 16, "Game", "Title", v, sizeof(v)) == -1);
+   /* a long title: cut to SYS_TITLE_MAX */
+   {
+      char big[400], want[SYS_TITLE_MAX + 1];
+      strcpy(big, "[Game]\nTitle=");
+      memset(big + 13, 'x', 300);
+      strcpy(big + 313, "\n");
+      memset(want, 'x', SYS_TITLE_MAX);
+      want[SYS_TITLE_MAX] = 0;
+      CHECK(ini(big, "Game", "Title", v, SYS_TITLE_MAX + 1) == 0 && !strcmp(v, want));
+   }
+   /* random bytes: never past out, out always ends in 0 and is UTF-8 */
+   {
+      char text[300], out[16];
+      int i, k;
+      srand(7);
+      for (i = 0; i < 100000; i++)
+      {
+         int n = rand() % 300;
+         static const char *const bits[] = { "[Game]", "\n", "Title", "=", " ", "\"", "\xC3", "\xA9", "\xE3", "\x81", "\r", "[", "]" };
+         int len = 0;
+         while (len < n)
+         {
+            const char *b = rand() % 3 ? bits[rand() % 13] : NULL;
+            if (b && len + (int)strlen(b) < n)
+            {
+               memcpy(text + len, b, strlen(b));
+               len += strlen(b);
+            }
+            else
+               text[len++] = (char)(rand() % 256);
+         }
+         memset(out, 'Q', sizeof(out));
+         if (sys_ini_value(text, len, "Game", "Title", out, 12) == 0)
+         {
+            int ok = strlen(out) < 12;
+            for (k = 0; out[k]; )
+            {
+               int l = (unsigned char)out[k] < 0x80 ? 1 : (unsigned char)out[k] < 0xE0 ? 2 : (unsigned char)out[k] < 0xF0 ? 3 : 4;
+               if ((unsigned char)out[k] < 0x20)
+                  ok = 0;
+               k += l;
+               if (k > 11)
+                  ok = 0;
+            }
+            CHECK(ok);
+         }
+         CHECK(out[12] == 'Q' && memchr(out, 0, 12));
+      }
+   }
+}
+
+static void test_folder_games(void)
+{
+   static sys_desc list[SYS_MAX];
+   char p[600], v[SYS_TITLE_MAX + 1];
+   int n = sys_builtin(list), i;
+
+   strcpy(dir, "/tmp/systemstest.XXXXXX");
+   CHECK(mkdtemp(dir) != NULL);
+   /* the built-in ones have no folder games: folders aren't looked in */
+   CHECK(!sys_has_folder_games(list, n));
+   snprintf(p, sizeof(p), "%s/aedemphia", dir);
+   mkdir(p, 0777);
+   put("aedemphia/Game.ini", "[Game]\r\nLibrary=RGSS104E.dll\r\nTitle=Aedemphia\r\n");
+   put("aedemphia/Game.exe", "x");
+   CHECK(sys_of_folder(list, n, p) == -1);
+
+   CHECK(parse(rmxp_cfg) == 0);
+   list[n++] = s;
+   CHECK(sys_has_folder_games(list, n));
+   CHECK(sys_of_folder(list, n, p) == 2);
+   CHECK(sys_folder_title(&list[2], p, v, sizeof(v)) == 0 && !strcmp(v, "Aedemphia"));
+
+   /* the other marker, any case; no Game.ini: no title (the folder's name is used) */
+   snprintf(p, sizeof(p), "%s/mkxp", dir);
+   mkdir(p, 0777);
+   put("mkxp/MKXP.JSON", "{}");
+   CHECK(sys_of_folder(list, n, p) == 2);
+   CHECK(sys_folder_title(&list[2], p, v, sizeof(v)) == -1 && !v[0]);
+
+   /* Game.ini without a title, with a Shift-JIS one, very long */
+   snprintf(p, sizeof(p), "%s/notitle", dir);
+   mkdir(p, 0777);
+   put("notitle/game.ini", "[Game]\nLibrary=RGSS104E.dll\n");
+   CHECK(sys_of_folder(list, n, p) == 2);
+   CHECK(sys_folder_title(&list[2], p, v, sizeof(v)) == -1);
+   snprintf(p, sizeof(p), "%s/sjis", dir);
+   mkdir(p, 0777);
+   put("sjis/Game.ini", "[Game]\nTitle=\x83\x51\x81\x5B\x83\x80\n");
+   CHECK(sys_folder_title(&list[2], p, v, sizeof(v)) == -1);
+   snprintf(p, sizeof(p), "%s/big", dir);
+   mkdir(p, 0777);
+   {
+      /* the title after the first SYS_INI_MAX bytes isn't seen */
+      char *big = malloc(SYS_INI_MAX + 100);
+      memset(big, '\n', SYS_INI_MAX + 99);
+      memcpy(big, "[Game]\n", 7);
+      memcpy(big + SYS_INI_MAX - 5, "Title=Late\n", 11);
+      big[SYS_INI_MAX + 99] = 0;
+      put("big/Game.ini", big);
+      CHECK(sys_folder_title(&list[2], p, v, sizeof(v)) == -1);
+      memcpy(big + SYS_INI_MAX - 5, "\n\n\n\n\n\n\n\n\n\n\n", 11);
+      memcpy(big + SYS_INI_MAX - 12, "Title=OK\n", 9);
+      put("big/Game.ini", big);
+      CHECK(sys_folder_title(&list[2], p, v, sizeof(v)) == 0 && !strcmp(v, "OK"));
+      free(big);
+   }
+
+   /* not games: no marker; a folder named like a marker; no folder; a
+    * marker past the first SYS_FOLDER_SCAN entries isn't seen */
+   snprintf(p, sizeof(p), "%s/plain", dir);
+   mkdir(p, 0777);
+   put("plain/readme.txt", "x");
+   CHECK(sys_of_folder(list, n, p) == -1);
+   snprintf(p, sizeof(p), "%s/dirmarker", dir);
+   mkdir(p, 0777);
+   snprintf(p, sizeof(p), "%s/dirmarker/Game.ini", dir);
+   mkdir(p, 0777);
+   snprintf(p, sizeof(p), "%s/dirmarker", dir);
+   CHECK(sys_of_folder(list, n, p) == -1);
+   snprintf(p, sizeof(p), "%s/missing", dir);
+   CHECK(sys_of_folder(list, n, p) == -1);
+   CHECK(sys_folder_title(&list[2], p, v, sizeof(v)) == -1);
+   snprintf(p, sizeof(p), "%s/crowd", dir);
+   mkdir(p, 0777);
+   for (i = 0; i < SYS_FOLDER_SCAN + 50; i++)
+   {
+      char f[64];
+      snprintf(f, sizeof(f), "crowd/f%03d.dat", i);
+      put(f, "x");
+   }
+   CHECK(sys_of_folder(list, n, p) == -1 || sys_of_folder(list, n, p) == 2);  /* readdir's order isn't fixed */
+
+   /* a system without title_from: no title */
+   CHECK(parse("name=T\nconsole=T\ntitle_id=0x0004000000ABC000\nfolder_game=Game.ini\n") == 0);
+   snprintf(p, sizeof(p), "%s/aedemphia", dir);
+   CHECK(sys_folder_title(&s, p, v, sizeof(v)) == -1);
+
+   /* two systems with markers there: the first in the list wins */
+   CHECK(parse("name=Exe\nconsole=EXE\ntitle_id=0x0004000000ABC000\nfolder_game=game.exe\n") == 0);
+   list[n++] = s;
+   CHECK(sys_of_folder(list, n, p) == 2);
+   list[2] = list[3];
+   CHECK(parse(rmxp_cfg) == 0);
+   list[3] = s;
+   CHECK(sys_of_folder(list, n, p) == 2);
+   CHECK(sys_of_folder(list, 2, p) == -1);
+
+   clean();
+   rmdir(dir);
+}
+
 int main(void)
 {
    test_random();
@@ -597,6 +800,8 @@ int main(void)
    test_duplicate_keys();
    test_folder();
    test_detect();
+   test_ini();
+   test_folder_games();
    printf("%d checks, %d failed\n", checks, fails);
    return fails ? 1 : 0;
 }

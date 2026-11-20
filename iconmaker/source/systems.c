@@ -488,3 +488,185 @@ int sys_of_file(const sys_desc *list, int n, const char *path)
    }
    return sys_of_zip(list, n, got ? first : NULL);
 }
+
+/* ------------------------------------------------------------------ */
+/* folder games                                                        */
+/* ------------------------------------------------------------------ */
+
+int sys_has_folder_games(const sys_desc *list, int n)
+{
+   int i;
+   for (i = 0; i < n; i++)
+      if (list[i].nfolder_game)
+         return 1;
+   return 0;
+}
+
+int sys_of_folder(const sys_desc *list, int n, const char *folder)
+{
+   DIR *d;
+   struct dirent *e;
+   int best = -1, seen = 0, i, k;
+   if (!sys_has_folder_games(list, n) || !(d = opendir(folder)))
+      return -1;
+   while (best != 0 && seen < SYS_FOLDER_SCAN && (e = readdir(d)))
+   {
+      seen++;
+      if (e->d_type == DT_DIR)
+         continue;
+      /* only systems before the best so far can still win */
+      for (i = 0; i < (best < 0 ? n : best); i++)
+         for (k = 0; k < list[i].nfolder_game; k++)
+            if (!strcasecmp(e->d_name, list[i].folder_game[k]))
+            {
+               best = i;
+               break;
+            }
+   }
+   closedir(d);
+   return best;
+}
+
+/* the length of the UTF-8 letter at s (n bytes left), 0 if it isn't one */
+static int utf8_len(const unsigned char *s, size_t n)
+{
+   unsigned c = s[0], cp;
+   int len, i;
+   if (c < 0x80)
+      return 1;
+   if (c >= 0xC2 && c <= 0xDF)
+      len = 2, cp = c & 0x1F;
+   else if (c >= 0xE0 && c <= 0xEF)
+      len = 3, cp = c & 0x0F;
+   else if (c >= 0xF0 && c <= 0xF4)
+      len = 4, cp = c & 0x07;
+   else
+      return 0;
+   if ((size_t)len > n)
+      return 0;
+   for (i = 1; i < len; i++)
+   {
+      if ((s[i] & 0xC0) != 0x80)
+         return 0;
+      cp = cp << 6 | (s[i] & 0x3F);
+   }
+   if ((len == 3 && (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF))) ||
+       (len == 4 && (cp < 0x10000 || cp > 0x10FFFF)))
+      return 0;
+   return len;
+}
+
+/* text[a..b) without the spaces around it */
+static void trim(const char *text, size_t *a, size_t *b)
+{
+   while (*a < *b && is_space(text[*a]))
+      (*a)++;
+   while (*b > *a && is_space(text[*b - 1]))
+      (*b)--;
+}
+
+static int same_word(const char *text, size_t a, size_t b, const char *want)
+{
+   return b - a == strlen(want) && !strncasecmp(text + a, want, b - a);
+}
+
+int sys_ini_value(const char *text, size_t len, const char *section, const char *key, char *out, int outn)
+{
+   size_t pos = 0;
+   int in_section = 0;
+   if (outn < 1)
+      return -1;
+   out[0] = 0;
+   if (len >= 3 && !memcmp(text, "\xEF\xBB\xBF", 3))
+      pos = 3;
+   while (pos < len)
+   {
+      size_t a = pos, b, eq;
+      while (pos < len && text[pos] != '\n' && text[pos] != '\r')
+         pos++;
+      b = pos;
+      while (pos < len && (text[pos] == '\n' || text[pos] == '\r'))
+         pos++;
+      trim(text, &a, &b);
+      if (a == b || text[a] == ';' || text[a] == '#')
+         continue;
+      if (text[a] == '[')
+      {
+         size_t c = a + 1, d = c;
+         while (d < b && text[d] != ']')
+            d++;
+         if (d == b)
+            continue;                   /* not a section line */
+         trim(text, &c, &d);
+         in_section = same_word(text, c, d, section);
+         continue;
+      }
+      if (!in_section)
+         continue;
+      for (eq = a; eq < b && text[eq] != '='; eq++)
+         ;
+      if (eq == b)
+         continue;
+      {
+         size_t ka = a, kb = eq, va = eq + 1, vb = b, i;
+         int n = 0;
+         trim(text, &ka, &kb);
+         if (!same_word(text, ka, kb, key))
+            continue;
+         trim(text, &va, &vb);
+         if (vb - va >= 2 && text[va] == '"' && text[vb - 1] == '"')
+         {
+            va++;
+            vb--;
+            trim(text, &va, &vb);
+         }
+         if (va == vb)
+            return -1;
+         /* all of it must be UTF-8 text; it's cut to fit after that */
+         for (i = va; i < vb; )
+         {
+            int l = utf8_len((const unsigned char *)text + i, vb - i);
+            if (!l || (l == 1 && ((unsigned char)text[i] < 0x20 || text[i] == 0x7F)))
+            {
+               out[0] = 0;
+               return -1;
+            }
+            if (n + l < outn)
+            {
+               memcpy(out + n, text + i, l);
+               n += l;
+            }
+            else
+               outn = n + 1;           /* full: no smaller letter after a cut one */
+            i += l;
+         }
+         out[n] = 0;
+         return 0;
+      }
+   }
+   return -1;
+}
+
+int sys_folder_title(const sys_desc *s, const char *folder, char *out, int outn)
+{
+   char path[SYS_PATH_MAX + SYS_WORD_MAX + 2], *text;
+   size_t len;
+   int r;
+   FILE *f;
+   if (outn > 0)
+      out[0] = 0;
+   if (!s->title_file[0] ||
+       snprintf(path, sizeof(path), "%s/%s", folder, s->title_file) >= (int)sizeof(path) ||
+       !(f = fopen(path, "rb")))
+      return -1;
+   if (!(text = malloc(SYS_INI_MAX)))
+   {
+      fclose(f);
+      return -1;
+   }
+   len = fread(text, 1, SYS_INI_MAX, f);
+   fclose(f);
+   r = sys_ini_value(text, len, s->title_section, s->title_key, out, outn);
+   free(text);
+   return r;
+}

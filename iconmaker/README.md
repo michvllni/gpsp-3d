@@ -156,9 +156,23 @@ extension (the built-in ones come first, then the files in name order). A
 first file in the zip, else for the first system that has `.zip` (GBA). A
 system without `.zip` in its `extensions` gets no zips.
 
-In this version games are found by their `extensions`; folder games
-(`folder_game`, `title_from`) and the `generic` and PNG icons come next
-(see ROADMAP.md). Until then, a system's games get the GBA cartridge icon.
+A folder is a game (a **folder game**) when one of its system's
+`folder_game` files is in it, in any case (`Game.ini`, `game.ini`), for
+example `sdmc:/rmxp3ds/games/Aedemphia/` with its `Game.ini`. It's listed
+with the games and made like one: the forwarder gets the folder's path
+(`sdmc:/rmxp3ds/games/Aedemphia`, no `/` at the end) and writes it to the
+system's `launch` file. Its name comes from `title_from`, here the `Title=`
+line in the `[Game]` section of its `Game.ini` (the first 16 KB of the file
+are read); without one, or if the title isn't UTF-8 text (an old Japanese
+game's Shift-JIS), the folder's name is used. Names are cut to 63 bytes.
+Only a folder's first 256 entries are looked at, and folders are looked in
+only if a system has `folder_game`. A folder game's icon in the list,
+tapped once its row is selected, opens it as a folder; A makes its icon.
+Folder games get no box art.
+
+In this version a folder game gets no pictures yet (`icon.png` in it and
+`<folder>.png` next to it come next), and systems from files get the GBA
+cartridge icon until `generic` and PNG icons are done (see ROADMAP.md).
 
 An app that wants icons has to: be installed as a CIA with its `title_id`;
 at start, read the game's path from its `launch` file, then delete or ignore

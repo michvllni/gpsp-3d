@@ -41,6 +41,9 @@
 #define SYS_FILE_MAX     4096    /* a system file's size */
 #define SYS_LINE_MAX     400     /* a line in it */
 #define SYS_NOTES        8       /* skipped files with their reason kept */
+#define SYS_TITLE_MAX    63      /* a folder game's name from title_from (the icon's name) */
+#define SYS_INI_MAX      16384   /* title_from: the first 16 KB of the file are read */
+#define SYS_FOLDER_SCAN  256     /* a folder's first 256 entries are looked at for folder_game */
 
 /* the built-in ones' places (a file can replace them, in their place) */
 enum { SYS_GBA, SYS_SNES, SYS_BUILTIN };
@@ -92,5 +95,24 @@ int sys_load(const char *dir, sys_desc *list, int n, sys_note *notes, int *nnote
 int sys_of_ext(const sys_desc *list, int n, const char *ext);
 int sys_of_zip(const sys_desc *list, int n, const char *first);
 int sys_of_file(const sys_desc *list, int n, const char *path);
+
+/* 1 if one of the n systems has folder_game (else folders needn't be looked in) */
+int sys_has_folder_games(const sys_desc *list, int n);
+
+/* Which of the n systems the folder (a path, no '/' at the end) is a game
+ * for: the first system with a folder_game file in it (in its first
+ * SYS_FOLDER_SCAN entries, any case), or -1. */
+int sys_of_folder(const sys_desc *list, int n, const char *folder);
+
+/* key's value in section of an INI file's text (len bytes; names in any
+ * case, spaces around them and a BOM left out, "quotes" around the value
+ * taken off). Into out (outn bytes, cut at a whole UTF-8 letter). 0, or -1
+ * if it isn't there, is empty, or isn't UTF-8 text (control characters,
+ * or another code page such as Shift-JIS: then the folder's name is used). */
+int sys_ini_value(const char *text, size_t len, const char *section, const char *key, char *out, int outn);
+
+/* a folder game's name from s's title_from (folder: no '/' at the end):
+ * 0, or -1 (no title_from, no file, no such key) */
+int sys_folder_title(const sys_desc *s, const char *folder, char *out, int outn);
 
 #endif
