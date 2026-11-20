@@ -28,9 +28,10 @@ Read it before changing anything; the README is for users, this is for you.
 | `gpsp3ds/make-forwarders.sh` | PC script: forwarder CIAs for a folder of games (ImageMagick optional) |
 | `iconmaker/source/fwdcia.c`, `banner.c` | patch a template CIA on the 3DS (title ID, SMDH, banner, romfs path, every hash) |
 | `iconmaker/source/pngshrink.c`, `jpegshrink.c` | covers decoded small while read (libpng / libjpeg) |
+| `iconmaker/source/systems.c` | the systems: built-in GBA/SNES plus `sdmc:/3ds/gpsp3d/iconmaker/systems/*.cfg` (untrusted, every value checked) |
 | `iconmaker/source/boxart.c`, `netget.c` | box art download: libretro's No-Intro list, CRC32, libretro-thumbnails (libcurl) |
 | `iconmaker/tools/make_banner3d.py` | makes the 3D HOME Menu banners (needs pycgfx; run on a PC) |
-| `iconmaker/test/` | `fwdtest.c` + `verify.py` (forwarder CIA checked like the 3DS does), `pngtest.c`, `jpegtest.c`, `boxarttest.c` |
+| `iconmaker/test/` | `fwdtest.c` + `verify.py` (forwarder CIA checked like the 3DS does), `pngtest.c`, `jpegtest.c`, `boxarttest.c`, `systemstest.c` (system files; CI runs it) |
 | `tests/gba-roms/` | core ROM tests (CI) |
 | `docker/` | the build image and `ci-build.sh` (what CI runs) |
 | `ROADMAP.md` | what's done, in testing, planned; update it with every change |

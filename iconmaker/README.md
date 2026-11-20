@@ -103,6 +103,82 @@ R opens **My icons**, the games you've put on the HOME Menu: X deletes an icon
 
 Needs custom firmware with signature patches (Luma3DS), as for any CIA.
 
+### Other systems (system files)
+
+The systems Icon Maker knows are GBA (gpSP 3D) and SNES (Snes9x 3D), built in.
+Other 3DS apps can add theirs with a small text file in
+`sdmc:/3ds/gpsp3d/iconmaker/systems/`, one per system, for example
+`rmxp3ds.cfg`:
+
+```
+# rmxp3ds hasn't chosen its title ID yet: this one is an example
+name=rmxp3ds
+console=RMXP
+title_id=0x0004000000F3E100
+launch=sdmc:/rmxp3ds/launch.txt
+folder_game=Game.ini,mkxp.json
+title_from=Game.ini:Game:Title
+icon=sdmc:/3ds/rmxp3ds/icon.png
+tag_color=#E5604F
+boxart=none
+```
+
+| Key | What | Limit |
+|---|---|---|
+| `name` | The app's name. Icons get it as their publisher, and **My icons** finds them by it. Needed. | 63 letters |
+| `console` | The short tag on the banner, in **My icons** and in the header. Needed. | 15 letters |
+| `title_id` | The app's CIA title ID, `0x00040000` and 8 hex digits. Needed. | |
+| `launch` | The file the app reads the game's path from when it starts. Empty or left out: gpSP 3D's own way. | 127 letters |
+| `extensions` | Game files, like `.gba,.zip`. | 8, of 14 letters |
+| `folder_game` | A folder holding one of these files is a game, like `Game.ini,mkxp.json`. | 4, of 63 letters |
+| `title_from` | A folder game's name from an INI file: `file:section:key`. Else the folder's name. | 63 letters each |
+| `icon` | The icon for games without a picture: `gba`, `snes`, `generic`, or a PNG (`sdmc:/....png`). | 255 letters |
+| `tag_color` | The tag's colour on the banner, `#RRGGBB`. | |
+| `boxart` | The system's folder in libretro-thumbnails (`Nintendo_-_Game_Boy_Advance`), or `none`. | 127 letters |
+
+A file needs `name`, `console`, `title_id`, and `extensions` or
+`folder_game`. Lines starting with `#` are comments; keys Icon Maker doesn't
+know are left out. A file whose `name` is `gpSP 3D` or `Snes9x 3D` replaces
+that built-in system. Icon Maker reads up to 16 systems, the two built-in
+ones included, in the files' name order.
+
+A file that can't be used (a value too long, a bad `title_id`, the same
+`name` as another file) is skipped. The Games list then ends in a yellow row,
+"1 system file skipped: see top screen"; select it to see each file and why.
+
+The header shows the tags of the systems installed as a CIA (`GBA + SNES`).
+Box art for another system comes from its `boxart` folder; its game list is
+kept in `sdmc:/3ds/gpsp3d/boxart_<number>.txt`.
+
+A game file is for the first system whose `extensions` have its
+extension (the built-in ones come first, then the files in name order). A
+`.zip` is for the first system that has `.zip` and the extension of the
+first file in the zip, else for the first system that has `.zip` (GBA). A
+system without `.zip` in its `extensions` gets no zips.
+
+A folder is a game (a **folder game**) when one of its system's
+`folder_game` files is in it, in any case (`Game.ini`, `game.ini`), for
+example `sdmc:/rmxp3ds/games/Aedemphia/` with its `Game.ini`. It's listed
+with the games and made like one: the forwarder gets the folder's path
+(`sdmc:/rmxp3ds/games/Aedemphia`, no `/` at the end) and writes it to the
+system's `launch` file. Its name comes from `title_from`, here the `Title=`
+line in the `[Game]` section of its `Game.ini` (the first 16 KB of the file
+are read); without one, or if the title isn't UTF-8 text (an old Japanese
+game's Shift-JIS), the folder's name is used. Names are cut to 63 bytes.
+Only a folder's first 256 entries are looked at, and folders are looked in
+only if a system has `folder_game`. A folder game's icon in the list,
+tapped once its row is selected, opens it as a folder; A makes its icon.
+Folder games get no box art.
+
+In this version a folder game gets no pictures yet (`icon.png` in it and
+`<folder>.png` next to it come next), and systems from files get the GBA
+cartridge icon until `generic` and PNG icons are done (see ROADMAP.md).
+
+An app that wants icons has to: be installed as a CIA with its `title_id`;
+at start, read the game's path from its `launch` file, then delete or ignore
+it (as Snes9x 3D does with `launch.txt`); and ship its `.cfg`, for example by
+writing it to `sdmc:/3ds/gpsp3d/iconmaker/systems/` when it first starts.
+
 ## Building
 
 In the devkitPro MSYS2 shell: `./build-iconmaker.sh`. It builds the template
@@ -120,4 +196,5 @@ and icon, and redoes every hash the 3DS checks. `test/` checks this on a PC
 (`fwdtest` patches a CIA, `verify.py` checks every hash independently;
 `pngtest` and `jpegtest` shrink a PNG or JPEG as Icon Maker does, with the
 PC's libpng and libjpeg; `boxarttest game.gba out.png` gets a game's box art
-as Icon Maker does, with the PC's libcurl).
+as Icon Maker does, with the PC's libcurl; `systemstest` reads good and bad
+system files, and `docker/ci-build.sh` runs it).

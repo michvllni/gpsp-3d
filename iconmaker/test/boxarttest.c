@@ -25,12 +25,13 @@ int main(int argc, char **argv)
    char found[256], err[200], cache[300];
    boxart_source src[9];
    double t0;
-   int sys, r, n = 0, i, from;
+   const char *repo;
+   int r, n = 0, i, from;
    if (argc < 3) { fprintf(stderr, "usage: boxarttest game.gba out.png [list.txt [library-url ...]]\n"); return 2; }
    dot = strrchr(argv[1], '.');
-   sys = dot && (!strcasecmp(dot, ".sfc") || !strcasecmp(dot, ".smc")) ? BOXART_SNES : BOXART_GBA;
-   if (dot && !strcasecmp(dot, ".zip") && strstr(argv[1], "snes"))
-      sys = BOXART_SNES;
+   repo = (dot && (!strcasecmp(dot, ".sfc") || !strcasecmp(dot, ".smc"))) ||
+          (dot && !strcasecmp(dot, ".zip") && strstr(argv[1], "snes"))
+          ? "Nintendo_-_Super_Nintendo_Entertainment_System" : "Nintendo_-_Game_Boy_Advance";
    net_begin();
    for (i = 4; i < argc && n < 8; i++)
       src[n++].base = argv[i];
@@ -42,7 +43,7 @@ int main(int argc, char **argv)
       else
          snprintf(cache, sizeof(cache), "%s", list_path);
       t0 = now();
-      if (boxart_list_load(&src[i].list, src[i].base, sys, cache, err, sizeof(err)))
+      if (boxart_list_load(&src[i].list, src[i].base, repo, cache, err, sizeof(err)))
       {
          printf("game list of %s failed: %s\n", src[i].base ? src[i].base : "libretro", err);
          if (!src[i].base)
@@ -56,7 +57,7 @@ int main(int argc, char **argv)
       printf("game list of %s: %d games, %.2f s\n", src[i].base ? src[i].base : "libretro", src[i].list.n, now() - t0);
    }
    t0 = now();
-   r = boxart_get(src, n, argv[1], sys, argv[2], 128, found, sizeof(found), &from, err, sizeof(err));
+   r = boxart_get(src, n, argv[1], repo, argv[2], 128, found, sizeof(found), &from, err, sizeof(err));
    printf("%s: %s%s%s%s%s, %.2f s\n", argv[1],
           r == BOXART_SAVED ? "saved " : r == BOXART_NONE ? "no box art" : r == BOXART_STOPPED ? "stopped" : "error: ",
           r == BOXART_SAVED ? found : "", r == BOXART_SAVED ? " from " : "",
