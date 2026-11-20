@@ -18,15 +18,8 @@
 #define TRIES      6                 /* names tried at most for one game */
 #define NAME_MAX_  256
 
-/* the system's name in libretro's list, and its thumbnails' repository */
-static const char *const sys_name[BOXART_SYSTEMS] = {
-   "Nintendo - Game Boy Advance",
-   "Nintendo - Super Nintendo Entertainment System",
-};
-static const char *const sys_repo[BOXART_SYSTEMS] = {
-   "Nintendo_-_Game_Boy_Advance",
-   "Nintendo_-_Super_Nintendo_Entertainment_System",
-};
+/* the SNES thumbnails' folder: its games may have a copier's header */
+#define SNES_REPO  "Nintendo_-_Super_Nintendo_Entertainment_System"
 
 int (*boxart_stop)(void);
 void (*boxart_progress)(int step, size_t done, size_t total);
@@ -196,9 +189,10 @@ static void write_list(const boxart_list *l, const char *cache)
    }
 }
 
-int boxart_list_load(boxart_list *l, const char *base, int sys, const char *cache, char *err, int errlen)
+int boxart_list_load(boxart_list *l, const char *base, const char *repo, const char *cache, char *err, int errlen)
 {
-   char url[600], esc[200], *text;
+   char url[600], esc[3 * BOXART_REPO_MAX + 1], name[BOXART_REPO_MAX + 1], *text;
+   int i;
    uint8_t *dat;
    size_t size;
    int code;
@@ -209,9 +203,14 @@ int boxart_list_load(boxart_list *l, const char *base, int sys, const char *cach
          return 0;
       boxart_list_free(l);
    }
-   url_escape(sys_name[sys], esc, sizeof(esc));
+   /* the list's name is the folder's with spaces: Nintendo - Game Boy Advance */
+   snprintf(name, sizeof(name), "%s", repo);
+   for (i = 0; name[i]; i++)
+      if (name[i] == '_')
+         name[i] = ' ';
+   url_escape(name, esc, sizeof(esc));
    if (base)
-      snprintf(url, sizeof(url), "%s%s/list.txt", base, sys_repo[sys]);
+      snprintf(url, sizeof(url), "%s%s/list.txt", base, repo);
    else
       snprintf(url, sizeof(url), LIST_URL "%s.dat", esc);
    step = BOXART_STEP_LIST;
@@ -334,7 +333,7 @@ static int zip_first(FILE *f, uint32_t *crc, char *name, int namelen)
 
 /* CRC32 of the whole file (a SNES copier's 512-byte header left out, as
  * No-Intro does). 0 and *crc, or -1 (can't read it, or stopped). */
-static int file_crc(FILE *f, int sys, uint32_t *crc)
+static int file_crc(FILE *f, const char *repo, uint32_t *crc)
 {
    enum { CHUNK = 256 * 1024 };
    uint8_t *buf = malloc(CHUNK);
@@ -345,7 +344,7 @@ static int file_crc(FILE *f, int sys, uint32_t *crc)
       return -1;
    fseek(f, 0, SEEK_END);
    size = ftell(f);
-   if (sys == BOXART_SNES && size % 1024 == 512)
+   if (!strcmp(repo, SNES_REPO) && size % 1024 == 512)
       done = 512;
    fseek(f, done, SEEK_SET);
    step = BOXART_STEP_READ;
@@ -416,20 +415,20 @@ static void try_same_title(const boxart_list *l, tries *t, const char *name)
  * (crc_state 0: not read yet, 1: crc, -1: can't be read) */
 typedef struct
 {
-   const char *path;
-   int sys, crc_state;
+   const char *path, *repo;
+   int crc_state;
    uint32_t crc;
    char stem[NAME_MAX_], istem[NAME_MAX_];
 } game_id;
 
-static void id_init(game_id *id, const char *path, int sys)
+static void id_init(game_id *id, const char *path, const char *repo)
 {
    const char *dot = strrchr(path, '.');
    char inner[NAME_MAX_];
    FILE *f;
    memset(id, 0, sizeof(*id));
    id->path = path;
-   id->sys = sys;
+   id->repo = repo;
    stem_of(path, id->stem, sizeof(id->stem));
    if (dot && !strcasecmp(dot, ".zip"))
    {
@@ -456,7 +455,7 @@ static int id_crc(game_id *id)
    if ((f = fopen(id->path, "rb")))
    {
       setvbuf(f, NULL, _IOFBF, 64 * 1024);
-      if (file_crc(f, id->sys, &id->crc) == 0)
+      if (file_crc(f, id->repo, &id->crc) == 0)
          id->crc_state = 1;
       fclose(f);
    }
@@ -577,7 +576,7 @@ static int save_picture(const uint8_t *png, size_t size, int side, const char *o
 }
 
 /* the names in t from one source (base NULL: libretro); BOXART_* */
-static int get_from(const char *base, int sys, const tries *t, const char *out, int side,
+static int get_from(const char *base, const char *repo, const tries *t, const char *out, int side,
                     char *found, int foundlen, char *err, int errlen)
 {
    char esc[3 * NAME_MAX_], name[NAME_MAX_], url[1024];
@@ -594,9 +593,9 @@ static int get_from(const char *base, int sys, const tries *t, const char *out, 
             name[k] = '_';
       url_escape(name, esc, sizeof(esc));
       if (base)
-         snprintf(url, sizeof(url), "%s%s/Named_Boxarts/%s.png", base, sys_repo[sys], esc);
+         snprintf(url, sizeof(url), "%s%s/Named_Boxarts/%s.png", base, repo, esc);
       else
-         snprintf(url, sizeof(url), THUMBS_URL "%s/master/Named_Boxarts/%s.png", sys_repo[sys], esc);
+         snprintf(url, sizeof(url), THUMBS_URL "%s/master/Named_Boxarts/%s.png", repo, esc);
       code = net_get(url, PIC_MAX, &png, &size, err, errlen);
       if (code == 200 && size > 8 && !memcmp(png, "\x89PNG", 4))
       {
@@ -618,7 +617,7 @@ static int get_from(const char *base, int sys, const tries *t, const char *out, 
    return r;
 }
 
-int boxart_get(const boxart_source *src, int n, const char *path, int sys, const char *out, int side,
+int boxart_get(const boxart_source *src, int n, const char *path, const char *repo, const char *out, int side,
                char *found, int foundlen, int *from, char *err, int errlen)
 {
    static tries t;
@@ -629,7 +628,7 @@ int boxart_get(const boxart_source *src, int n, const char *path, int sys, const
    *from = -1;
    err[0] = 0;
    stopped = 0;
-   id_init(&id, path, sys);
+   id_init(&id, path, repo);
    for (i = 0; i < n && r != BOXART_SAVED && r != BOXART_STOPPED; i++)
    {
       if (names_for(&src[i].list, &id, &t))
@@ -640,7 +639,7 @@ int boxart_get(const boxart_source *src, int n, const char *path, int sys, const
       net_stop = on_stop;
       net_progress = on_progress;
       step = BOXART_STEP_DOWNLOAD;
-      r = get_from(src[i].base, sys, &t, out, side, found, foundlen, e, sizeof(e));
+      r = get_from(src[i].base, repo, &t, out, side, found, foundlen, e, sizeof(e));
       net_stop = NULL;
       net_progress = NULL;
       if (r == BOXART_SAVED)

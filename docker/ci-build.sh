@@ -15,6 +15,9 @@ echo "=== Icon Maker forwarder test ==="
 IM="$ROOT/iconmaker"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+# the system files (systems.c): good ones and every way one can be bad
+gcc -O2 -Wall -I"$IM/source" "$IM/test/systemstest.c" "$IM/source/systems.c" -o "$TMP/systemstest"
+"$TMP/systemstest"
 gcc -O2 -I"$IM/source" "$IM/test/fwdtest.c" "$IM/test/sha256.c" \
   "$IM/source/fwdcia.c" "$IM/source/banner.c" "$IM/source/deficon.c" -lm -o "$TMP/fwdtest"
 # fwdtest writes its banner input to the current folder
